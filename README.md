@@ -6,12 +6,13 @@ All of the code is organized into folders. Each folder starts with a number foll
 
 The code will look like the following:
           
-          COPY (
+           COPY
+           (
                   SELECT '"' || rolname || '" "' ||
                   coalesce(rolpassword, '') || '"'
                     FROM pg_authid
-            )
-            TO '/etc/pgbouncer/userlist.txt';
+           )
+           TO '/etc/pgbouncer/userlist.txt';
 
 ### Software requirements:
 This book concentrates on UNIX systems with a focus on Linux in particular. Such servers
@@ -32,3 +33,13 @@ PostgreSQL APT wiki page at this URL instead:
 h t t p s ://w i k i . p o s t g r e s q l . o r g /w i k i /A p t
 Be sure to include any “contrib” packages in your installation. They include helpful utilities
 and database extensions we will use in some recipes.
+
+## Related Products:
+* [PostgreSQL 9 Administration Cookbook: LITE Edition](https://www.packtpub.com/big-data-and-business-intelligence/postgresql-9-administration-cookbook-lite-edition?utm_source=github&utm_medium=repository&utm_content=9781849516204)
+
+* [Learning PostgreSQL](https://www.packtpub.com/big-data-and-business-intelligence/learning-postgresql?utm_source=github&utm_medium=repository&utm_content=9781783989188)
+
+* [Instant PostgreSQL Starter](https://www.packtpub.com/big-data-and-business-intelligence/instant-postgresql-starter?utm_source=github&utm_medium=repository&utm_content=9781782167563)
+
+###Suggestions and Feedback
+[Click here](https://docs.google.com/forms/d/e/1FAIpQLSe5qwunkGf6PUvzPirPDtuy1Du5Rlzew23UBp2S-P3wB-GcwQ/viewform) if you have any feedback or suggestions.
