@@ -5,12 +5,12 @@ All of the code is organized into folders. Each folder starts with a number foll
 
 
 The code will look like the following:
-        COPY (
-              SELECT '"' || rolname || '" "' ||
-              coalesce(rolpassword, '') || '"'
-                FROM pg_authid
-        )
-        TO '/etc/pgbouncer/userlist.txt';
+            COPY (
+                  SELECT '"' || rolname || '" "' ||
+                  coalesce(rolpassword, '') || '"'
+                    FROM pg_authid
+            )
+            TO '/etc/pgbouncer/userlist.txt';
 
 ### Software requirements:
 This book concentrates on UNIX systems with a focus on Linux in particular. Such servers
