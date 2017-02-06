@@ -1,0 +1,289 @@
+#!/bin/bash
+
+# Debian/Ubuntu Heading
+### BEGIN INIT INFO
+# Provides: postgresql
+# Required-Start: $local_fs $remote_fs $network $time
+# Required-Stop: $local_fs $remote_fs $network $time
+# Default-Start: 2 3 4 5
+# Default-Stop: 0 1 6
+# Short-Description: PostgreSQL database initialization script
+### END INIT INFO
+
+# RHEL-based heading:
+# chkconfig: 2345 86 14
+# description: PostgreSQL database initialization script
+
+# Start with some basic variable assignments. To satisfy either Debian or
+# RHEL systems, we will check the /etc/default and /etc/sysconfig directories
+# for variable overrides. There is only one variable that must be set for
+# this script to work:
+#
+#   * PGDATA     : Directory where database files reside. Required.
+#
+# Other variables that can be changed in this script include:
+#
+#   * DISABLE    : Set to 1 to disable service start. 0 by default.
+#   * CONF_DIR   : Directory where config files are stored.
+#                  If not set, config files will be expected in PGDATA.
+#   * LOG_DIR    : Directory where service logs should be created.
+#   * BIN_DIR    : Directory where the pg_ctl binary resides.
+#                  Default: return value of pg_config --bindir
+#   * PG_USER    : Name of the system user that will run PostgreSQL.
+#                  Default: postgres
+#   * EXTRA_OPTS : Arbitrary options to pass to pg_ctl command.
+
+NAME=postgresql
+
+DISABLE=0
+LOG_DIR=/var/log/$NAME
+BIN_DIR=$(pg_config --bindir)
+PG_USER=postgres
+EXTRA_OPTS=''
+
+# Now inject the overrides:
+
+if [ -f /etc/sysconfig/postgresql ]; then
+    source /etc/sysconfig/postgresql
+fi
+
+if [ -f /etc/default/postgresql ]; then
+    source /etc/default/postgresql
+fi
+
+if [ -z "$PGDATA" ]; then
+  echo "Please set the PGDATA value to your PostgreSQL data directory"
+  echo "in either /etc/default/postgresql or /etc/sysconfig/postgresql."
+  exit 4
+fi
+
+# With user-configured varibles defined, set a few helper variables to act
+# as shortcuts.
+
+PG_LOG="$LOG_DIR/startup.log"
+PG_CMD="$BIN_DIR/pg_ctl -l $PG_LOG -D $PGDATA"
+
+if [ -n "$CONF_DIR" ]; then
+  PM_OPTS="-c config_file='$CONF_DIR/postgresql.conf'"
+  PG_CMD="$PG_CMD -o \"$PM_OPTS\""
+fi
+
+# Since this script runs as root, make sure the logging and pid directories
+# exist, and are writable by the PG_USER user. PostgreSQL startup output goes
+# straight to STDOUT and STDERR, so we will have to manually create/maintain
+# the log before output gets redirected by PostgreSQL.
+
+if [ ! -d $LOG_DIR ]; then
+    mkdir -p $LOG_DIR
+    chown $PG_USER $LOG_DIR
+fi
+
+if [ ! -d $LOG_DIR ]; then
+    mkdir -p $LOG_DIR
+    chown $PG_USER $LOG_DIR
+fi
+
+if [ ! -d /var/run/$NAME ]; then
+    mkdir /var/run/$NAME
+    chown $PG_USER /var/run/$NAME
+fi
+
+############################
+# BEGIN FUNCTION DEFINITIONS
+############################
+
+##
+# Return the PID of the PostgreSQL service
+#
+get_pid()
+{
+    PID_FILE=$PGDATA/postmaster.pid
+
+    if [ ! -f $PID_FILE ]; then
+        return
+    fi
+
+    PID=$(head -1 $PID_FILE)
+    ps -p $PID &>/dev/null
+
+    if [ $? -eq 1 ]; then
+        return
+    fi
+
+    echo $PID
+}
+
+##
+# Start the PostgreSQL service
+#
+# This start function is fully LSB compliant. Exit codes are defined such
+# that they are compatible with scripts that function based on exit codes.
+#
+start()
+{
+    PID=$(get_pid)
+
+    # No reason to start the service or perform any other checks if it's
+    # already running. Exit with status 0 if we find an active PID.
+
+    if [ -n "$PID" ]; then
+       echo "$NAME already running"
+       return
+    fi
+
+    # Attempt to start the service. Capture output in the log we set up
+    # earlier in the script.
+
+    su -c "$PG_CMD start -w" - $PG_USER
+    rc=$?
+
+    PID=$(get_pid)
+
+    # If the start command didn't work, or the service died for some other
+    # reason, the start process failed. Otherwise, report success.
+
+    if [ $rc != '0' ] || [ -z "$PID" ]; then
+        echo "Could not start $NAME. Check $PG_LOG."
+        exit 1
+    else
+        echo "$NAME service started"
+    fi
+}
+
+##
+# Stop the PostgreSQL service
+#
+# This stop function is fully LSB compliant. Exit codes are defined such
+# that they are compatible with scripts that function based on exit codes.
+#
+stop()
+{
+    PID=$(get_pid)
+
+    # No reason to stop the service or perform any other checks if it's
+    # not even running. Exit with status 0 if we don't find an active PID.
+
+    if [ -z "$PID" ]; then
+       echo "$NAME not running"
+       return
+    fi
+
+    # We know the service is running at this point. We need to attempt to
+    # stop it. That may not work, so we need to return status 1 if that
+    # fails.
+
+    su -c "$PG_CMD stop -m fast" - $PG_USER
+    rc=$?
+
+    PID=$(get_pid)
+
+    if [ $rc = '0' ] && [ -z "$PID" ]; then
+        echo "$NAME service stopped"
+    else
+        echo "Could not stop $NAME. Check $PG_LOG"
+        exit 1
+    fi
+}
+
+##
+# Restart the postgresql service
+#
+# This start function is fully LSB compliant. Exit codes are defined such
+# that they are compatible with scripts that function based on exit codes.
+#
+restart()
+{
+    PID=$(get_pid)
+
+    # For restart to be fully compliant, it should attempt to start a stopped
+    # service. Thus we can't just call stop if the service isn't running, as
+    # that would exit the process prematurely. Only call stop if PostgreSQL is
+    # actually running.
+
+    if [ -n "$PID" ]; then
+       stop
+       sleep 1
+    fi
+
+    start
+}
+
+##
+# Reload PostgreSQL configuration files
+#
+# This reload function is fully LSB compliant. Exit codes are defined such
+# that they are compatible with scripts that function based on exit codes.
+#
+reload()
+{
+    PID=$(get_pid)
+
+    # No reason to reload config files if it's not even running.
+    # Exit with status 0 if we don't find an active PID.
+
+    if [ -z "$PID" ]; then
+       echo "$NAME not running"
+       return
+    fi
+
+    # We know the service is running at this point. We need to attempt to
+    # reload config files. That may not work, so we need to return status
+    # 1 if that fails.
+
+    su -c "$PG_CMD $EXTRA_OPTS reload" - $PG_USER
+    rc=$?
+
+    if [ $rc != '0' ]; then
+        echo "Could not reload $NAME config files. Check $PG_LOG."
+        exit 1
+    else
+        echo "Reloaded $NAME configuration files"
+    fi
+}
+
+##
+# Check status of postgresql
+#
+# This reload function is fully LSB compliant. Exit codes are defined such
+# that they are compatible with scripts that function based on exit codes.
+#
+# Status checks are something of a special case and have no error state.
+# Either the service is running, or it is not. This corresponds to state
+# 0 for running, or 3 for not running.
+#
+status()
+{
+    PID=$(get_pid);
+
+    if [ -z "$PID" ]; then
+        echo "$NAME not running"
+        exit 3
+    else
+        echo "$NAME is running (PID: $PID)"
+    fi
+}
+
+#########################
+# Process Control Section
+#########################
+
+case "$1" in
+  start|stop|restart|reload|status)
+        $1
+        ;;
+  try-restart)
+        exit 3  # Not implemented.
+        ;;
+  force-reload)
+        reload
+        ;;
+  *)
+        echo $"Usage: $0 {start|stop|restart|reload|status}"
+        exit 2
+esac
+
+# Theoretically all error exit conditions have been handled. In that case,
+# the default status of this script should be "success" status of 0.
+
+exit 0
+

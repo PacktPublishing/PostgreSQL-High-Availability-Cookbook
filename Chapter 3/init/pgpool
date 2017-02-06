@@ -1,0 +1,279 @@
+#!/bin/bash
+
+# Debian/Ubuntu Heading
+### BEGIN INIT INFO
+# Provides: pgpool
+# Required-Start: $local_fs $remote_fs $network $time
+# Required-Stop: $local_fs $remote_fs $network $time
+# Default-Start: 2 3 4 5
+# Default-Stop: 0 1 6
+# Short-Description: pgpool-II database pool service script
+### END INIT INFO
+
+# RHEL-based heading:
+# chkconfig: 2345 86 14
+# description: pgpool-II database pool service script
+
+# Start with some basic variable assignments. To satisfy either Debian or
+# RHEL systems, we will check the /etc/default and /etc/sysctl directories
+# for variable overrides. Variables that can be changed in these scripts
+# include:
+#
+#   * DISABLE    : Set to 1 to disable service start. 0 by default.
+#   * CONF_DIR   : Directory where config files are stored.
+#   * LOG_DIR    : Directory where service logs should be created.
+#   * BIN_DIR    : Directory where the pgpool binary resides.
+#   * POOL_USER  : Name of the system user that will run pgpool.
+#   * EXTRA_OPTS : Arbitrary options to pass to pgpool service.
+
+NAME=pgpool
+
+DISABLE=0
+CONF_DIR=/etc/$NAME
+LOG_DIR=/var/log/$NAME
+BIN_DIR=/usr/bin
+POOL_USER=postgres
+EXTRA_OPTS=''
+
+# Now inject the overrides:
+
+if [ -f /etc/sysconfig/pgpool ]; then
+    source /etc/sysconfig/pgpool
+fi
+
+if [ -f /etc/default/pgpool ]; then
+    source /etc/default/pgpool
+fi
+
+# With user-configured varibles defined, set a few helper variables to act
+# as shortcuts.
+
+PGPOOL_CONF="$CONF_DIR/$NAME.conf"
+PGPOOL_LOG="$LOG_DIR/$NAME.log"
+PGPOOL_CMD="$BIN_DIR/$NAME -d -D -f $PGPOOL_CONF"
+
+# Since this script runs as root, make sure the logging and pid directories
+# exist, and are writable by the pool user. Pgpool output goes straight to
+# STDOUT and STDERR, so we will have to manually create/maintain the log.
+
+if [ ! -d $LOG_DIR ]; then
+    mkdir -p $LOG_DIR
+    chown $POOL_USER $LOG_DIR
+fi
+
+if [ ! -f $PGPOOL_LOG ]; then
+    touch $PGPOOL_LOG
+    chown $POOL_USER $PGPOOL_LOG
+fi
+
+if [ ! -d /var/run/$NAME ]; then
+    mkdir /var/run/$NAME
+    chown $POOL_USER /var/run/$NAME
+fi
+
+# There are a couple extra configuration files pgpool can use. If we see
+# them in the config directory, add them as parameters.
+
+if [ -f $CONF_DIR/pcp.conf ];then
+    EXTRA_OPTS="$EXTRA_OPTS -F $CONF_DIR/pcp.conf"
+fi
+
+if [ -f $CONF_DIR/pool_hba.conf ];then
+    EXTRA_OPTS="$EXTRA_OPTS -a $CONF_DIR/pool_hba.conf"
+fi
+
+############################
+# BEGIN FUNCTION DEFINITIONS
+############################
+
+##
+# Return the PID of the pgpool service
+#
+get_pid()
+{
+    PID=$(pgrep -f "$PGPOOL_CMD")
+    echo $PID
+}
+
+##
+# Start the pgpool service
+#
+# This start function is fully LSB compliant. Exit codes are defined such
+# that they are compatible with scripts that function based on exit codes.
+#
+start()
+{
+    PID=$(get_pid)
+
+    # No reason to start the service or perform any other checks if it's
+    # already running. Exit with status 0 if we find an active PID.
+
+    if [ -n "$PID" ]; then
+       echo "pgpool already running"
+       return
+    fi
+
+    # A missing configuration file is a fatal error. Exit with status 1
+    # if this is the case.
+
+    if [ ! -f $PGPOOL_CONF ]; then
+       echo "Can not find required config file: $PGPOOL_CONF"
+       exit 1
+    fi
+
+    # Attempt to start the service. Capture output in the log we set up
+    # earlier in the script.
+
+    su $POOL_USER -c "$PGPOOL_CMD $EXTRA_OPTS -n &> $PGPOOL_LOG &"
+    rc=$?
+
+    PID=$(get_pid)
+
+    # If the start command didn't work, or the service died for some other
+    # reason, the start process failed. Otherwise, report success.
+
+    if [ $rc != '0' ] || [ -z "$PID" ]; then
+        echo "Could not start pgpool. Check $PGPOOL_LOG."
+        exit 1
+    else
+        echo "$NAME service started"
+    fi
+}
+
+##
+# Stop the pgpool service
+#
+# This stop function is fully LSB compliant. Exit codes are defined such
+# that they are compatible with scripts that function based on exit codes.
+#
+stop()
+{
+    PID=$(get_pid)
+
+    # No reason to stop the service or perform any other checks if it's
+    # not even running. Exit with status 0 if we don't find an active PID.
+
+    if [ -z "$PID" ]; then
+       echo "$NAME not running"
+       return
+    fi
+
+    # We know the service is running at this point. We need to attempt to
+    # stop it. That may not work, so we need to return status 1 if that
+    # fails.
+
+    su $POOL_USER -c "$PGPOOL_CMD -n stop &> $PGPOOL_LOG"
+    rc=$?
+
+    PID=$(get_pid)
+
+    if [ $rc = '0' ] && [ -z "$PID" ]; then
+        echo "$NAME service stopped"
+    else
+        echo "Could not stop $NAME. Check $PGPOOL_LOG"
+        exit 1
+    fi
+}
+
+##
+# Restart the pgpool service
+#
+# This start function is fully LSB compliant. Exit codes are defined such
+# that they are compatible with scripts that function based on exit codes.
+#
+restart()
+{
+    PID=$(get_pid)
+
+    # For restart to be fully compliant, it should attempt to start a stopped
+    # service. Thus we can't just call stop if the service isn't running, as
+    # that would exit the process prematurely. Only call stop if pgpool is
+    # actually running.
+
+    if [ -n "$PID" ]; then
+       stop
+       sleep 1
+    fi
+
+    start
+}
+
+##
+# Reload pgpool configuration files
+#
+# This reload function is fully LSB compliant. Exit codes are defined such
+# that they are compatible with scripts that function based on exit codes.
+#
+reload()
+{
+    PID=$(get_pid)
+
+    # No reason to reload config files if it's not even running.
+    # Exit with status 0 if we don't find an active PID.
+
+    if [ -z "$PID" ]; then
+       echo "$NAME not running"
+       return
+    fi
+
+    # We know the service is running at this point. We need to attempt to
+    # reload config files. That may not work, so we need to return status
+    # 1 if that fails.
+
+    su $POOL_USER -c "$PGPOOL_CMD $EXTRA_OPTS -n reload &> $PGPOOL_LOG"
+    rc=$?
+
+    if [ $rc != '0' ]; then
+        echo "Could not reload $NAME config files. Check $PGPOOL_LOG"
+        exit 1
+    else
+        echo "Reloaded $NAME configuration files"
+    fi
+}
+
+##
+# Check status of pgpool
+#
+# This reload function is fully LSB compliant. Exit codes are defined such
+# that they are compatible with scripts that function based on exit codes.
+#
+# Status checks are something of a special case and have no error state.
+# Either the service is running, or it is not. This corresponds to state
+# 0 for running, or 3 for not running.
+#
+status()
+{
+    PID=$(get_pid);
+
+    if [ -z "$PID" ]; then
+        echo "$NAME not running"
+        exit 3
+    else
+        echo "$NAME is running (PID: $PID)"
+    fi
+}
+
+#########################
+# Process Control Section
+#########################
+
+case "$1" in
+  start|stop|restart|reload|status)
+        $1
+        ;;
+  try-restart)
+        exit 3  # Not implemented.
+        ;;
+  force-reload)
+        reload
+        ;;
+  *)
+        echo $"Usage: $0 {start|stop|restart|reload|status}"
+        exit 2
+esac
+
+# Theoretically all error exit conditions have been handled. In that case,
+# the default status of this script should be "success" status of 0.
+
+exit 0
+
